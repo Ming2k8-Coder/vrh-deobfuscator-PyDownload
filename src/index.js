@@ -13,6 +13,7 @@ import { mkdir, writeFile, readFile, unlink, readdir } from "node:fs/promises";
 import crypto from "node:crypto";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
+import puppeteer from 'puppeteer';
 
 import { default as initialize } from "./basis_transcoder.cjs";
 
@@ -52,7 +53,7 @@ const decryptAndDecodeVRMFile = async (fileContents) => {
 	try {
 		const zlib = await import('node:zlib');
 		return zlib.zstdDecompressSync(decryptedBody, { maxOutputLength: decodedSize });
-	} catch(e) {
+	} catch (e) {
 		console.log("zlib.zstdDecompress requires Node v23.8; fallback to ZSTDDecoder");
 	}
 
@@ -96,6 +97,126 @@ const computeSeedMap = async (inputValue, url) => {
 		]),
 	);
 };
+
+/**
+ * captureSeedMap(modelUrl, options)
+ * - modelUrl: VRoid Hub model page URL
+ * - options: { chromePath, timeout }
+ *
+ * Returns the seedMap object or throws if not found.
+ */
+async function captureSeedMap(modelUrl, options = {}) {
+	const timeout = typeof options.timeout === 'number' ? options.timeout : 20000;
+	const chromePath = options.chromePath;
+
+	// derive id (last path segment)
+	let id;
+	try {
+		const u = new URL(modelUrl);
+		const parts = u.pathname.replace(/\/+$/, '').split('/');
+		id = parts[parts.length - 1];
+	} catch (e) {
+		throw new Error('Invalid modelUrl');
+	}
+
+	const launchOptions = { headless: "new", args: ['--no-sandbox'], devtools: true };
+	if (chromePath && existsSync(chromePath)) launchOptions.executablePath = chromePath;
+	else if (process.platform === 'win32') {
+		const common = [
+			'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+			'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+		];
+		for (const p of common) if (existsSync(p)) { launchOptions.executablePath = p; break; }
+	}
+
+	const browser = await puppeteer.launch(launchOptions);
+	const page = await browser.newPage();
+
+	let captured = null;
+	let viewerScriptUrl = null;
+
+	const cdp = await page.target().createCDPSession();
+	await cdp.send('Debugger.enable');
+	await cdp.send('Runtime.enable');
+
+	let breakpointSet = false;
+
+	function indexToLineCol(text, idx) {
+		const prefix = text.slice(0, idx);
+		const lines = prefix.split('\n');
+		return { lineNumber: Math.max(0, lines.length - 1), columnNumber: lines[lines.length - 1].length || 0 };
+	}
+
+	async function trySetBreakpointOnScript(scriptUrl, scriptSource) {
+		if (breakpointSet) return false;
+		const patterns = ['this._seedMap=e.seedMap'];
+		for (const p of patterns) {
+			const i = scriptSource.indexOf(p);
+			if (i === -1) continue;
+			const { lineNumber, columnNumber } = indexToLineCol(scriptSource, i);
+			try {
+				await cdp.send('Debugger.setBreakpointByUrl', { url: scriptUrl, lineNumber, columnNumber });
+				console.log(`Set breakpoint on ${scriptUrl} at line ${lineNumber + 1}, column ${columnNumber + 1}`);
+				breakpointSet = true;
+				return true;
+			} catch (e) {
+				// ignore and try next
+			}
+		}
+		return false;
+	}
+
+	cdp.on('Debugger.scriptParsed', async (msg) => {
+		try {
+			const url = msg.url || '';
+			if (!url) return;
+			if (!url.includes('viewer') && !url.includes('febc') && !url.includes('chunk')) return;
+			const res = await cdp.send('Debugger.getScriptSource', { scriptId: msg.scriptId });
+			const src = res.scriptSource || '';
+			if (!src) return;
+			if (src.includes('seedMap')) {
+				viewerScriptUrl = url;
+				await trySetBreakpointOnScript(url, src);
+			}
+		} catch (e) { }
+	});
+
+	cdp.on('Debugger.paused', async (pauseMsg) => {
+		if (captured) { try { await cdp.send('Debugger.resume'); } catch (e) { } return; }
+
+		const frameId = pauseMsg.callFrames[0].callFrameId;
+
+		const { result: value } = await cdp.send('Debugger.evaluateOnCallFrame', {
+			callFrameId: frameId,
+			expression: 'e',
+			returnByValue: true
+		});
+
+		console.log(value.value.seedMap);
+		captured = value.value.seedMap;
+
+		try { await cdp.send('Debugger.resume'); } catch (e) { }
+	});
+
+	await page.goto(modelUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+	await page.reload({ waitUntil: 'networkidle2', timeout: 60000 });
+
+	const start = Date.now();
+	while (!captured && (Date.now() - start) < timeout) {
+		if (viewerScriptUrl && !breakpointSet) {
+			try {
+				const resp = await page.evaluate(u => fetch(u).then(r => r.text()), viewerScriptUrl);
+				if (resp && resp.includes('seedMap')) await trySetBreakpointOnScript(viewerScriptUrl, resp);
+			} catch (e) { }
+		}
+
+		await new Promise(r => setTimeout(r, 300));
+	}
+
+	await browser.close();
+	if (!captured) throw new Error('Could not capture seedMap');
+	return captured;
+}
 
 class RandomGenerator {
 	constructor(seed = 0x5491333) {
@@ -249,7 +370,7 @@ class Deobfuscator {
 
 const makeSafeFilename = (name) => {
 	return name.replace(/[<>:"\/\\|?*\u0000-\u001F]/g, (x) => {
-		return '_x'+('0'+x.charCodeAt(0).toString(16)).substr(-2)+'_';
+		return '_x' + ('0' + x.charCodeAt(0).toString(16)).substr(-2) + '_';
 	});
 }
 
@@ -258,10 +379,10 @@ const writeTexture = async (texture, suffix, buffer, ext) => {
 	const match = name.match(/^data:.*?\bbase64,(.+)(.)$/);
 	if (match) {
 		const data = Buffer.from(match[1], "base64");
-		name = crypto.createHash("md5").update(data).digest("hex")+"_"+match[2];
+		name = crypto.createHash("md5").update(data).digest("hex") + "_" + match[2];
 		await writeFile(`./debug/${name}.${suffix}.base64.png`, data);
 	}
-	await writeFile(`./debug/${makeSafeFilename(name)}.${suffix}.${ext||"png"}`, buffer);
+	await writeFile(`./debug/${makeSafeFilename(name)}.${suffix}.${ext || "png"}`, buffer);
 }
 
 const VRM_EXTENSION_NAME = "VRM";
@@ -303,7 +424,7 @@ class TexturePoolExtension extends PreservationExtension {
 
 	_saveTextures = (json) => {
 		if (this._vrmTextures) return;
-		this._vrmTextures = (json.textures||[]).map((t) => ({
+		this._vrmTextures = (json.textures || []).map((t) => ({
 			name: t.name,
 			source: t.source,
 			sampler: t.sampler,
@@ -564,7 +685,7 @@ export class PIXIVBasisExtension extends Extension {
 		return this;
 	}
 
-	read() {}
+	read() { }
 	write() {
 		throw "This extension must be removed prior to writing.";
 	}
@@ -575,6 +696,8 @@ async function deobfuscateVRoidHubGLB(id) {
 
 	let vrmData = null;
 	let seedMap = null;
+	let modelUrl = null;
+	let resolvedSeed;
 
 	if (existsSync("./debug") === true) {
 		console.log("Cleaning up debug folder...");
@@ -592,7 +715,8 @@ async function deobfuscateVRoidHubGLB(id) {
 		const vrmInfo = JSON.parse(await readFile(`./cache/${id}.json`, "utf-8"));
 		const vrmPath = `./cache/${id}.glb`;
 		vrmData = await readFile(vrmPath);
-		seedMap = await computeSeedMap(id, vrmInfo.url);
+		modelUrl = vrmInfo.url;
+		seedMap = await computeSeedMap(id, modelUrl);
 	} else {
 		console.log(`Fetching VRM data for ID: ${id}...`);
 		const options = {
@@ -621,7 +745,8 @@ async function deobfuscateVRoidHubGLB(id) {
 			vrmInfoPath,
 			JSON.stringify({ id, url: response.url }, null, 2),
 		);
-		seedMap = await computeSeedMap(id, response.url);
+		modelUrl = response.url;
+		seedMap = await computeSeedMap(id, modelUrl);
 		console.log(`Fetched and decrypted VRM data for ID: ${id}.`);
 	}
 
@@ -682,9 +807,36 @@ async function deobfuscateVRoidHubGLB(id) {
 	const seed = seedMap[timestamp];
 
 	if (seed === undefined) {
-		throw new Error(`Seed not found for timestamp: ${timestamp}`);
+		console.log(`Seed not found for timestamp: ${timestamp}`);
+		// try to fetch the seed using puppeteer/capture logic
+		try {
+			console.log('Attempting to capture seed map via headless browser...');
+			const captured = await captureSeedMap(target, { headful: false, timeout: 30000 });
+			// persist captured seedmap
+			try {
+				await writeFile(`./cache/${id}.seedmap.json`, JSON.stringify(captured, null, 2));
+				console.log(`Wrote ./cache/${id}.seedmap.json`);
+			} catch (e) { }
+			// merge into seedMap and lookup again
+			seedMap = Object.assign({}, seedMap || {}, captured);
+			const newSeed = seedMap[timestamp];
+			if (newSeed === undefined) throw new Error('Captured seed map does not contain the timestamp');
+			console.log('Captured seed; continuing with deobfuscation.');
+			// reassign seed variable for downstream
+			// Note: shadowing const `seed` is not allowed; so we'll set a local variable and use it below
+			// to keep existing flow, replace the const seed usage by creating a new variable `resolvedSeed`.
+			resolvedSeed = newSeed;
+		} catch (e) {
+			console.log('Failed to capture seedmap:', e && e.message ? e.message : e);
+			throw new Error(`Seed not found for timestamp: ${timestamp}`);
+		}
+
 	}
-	const deobfuscator = new Deobfuscator(seed);
+	// if capture path set resolvedSeed, use it, otherwise fall back to computed seed
+	const finalSeed = (typeof resolvedSeed !== 'undefined') ? resolvedSeed : seed;
+	if (finalSeed === undefined) throw new Error(`Seed resolution failed for timestamp: ${timestamp}`);
+
+	const deobfuscator = new Deobfuscator(finalSeed);
 	deobfuscator.processDocument(doc, version);
 
 	const decoder = new KTX2Decoder();
@@ -771,7 +923,7 @@ async function deobfuscateVRoidHubGLB(id) {
 
 			const dv = new DataView(image.buffer, image.byteOffset, image.byteLength);
 			const magic = dv.getUint32(0);
-			
+
 			if (magic === 0x52494646) {
 				console.log("Convering WEBP to PNG:", texture.getName());
 				const pngBuffer = await sharp(image)
