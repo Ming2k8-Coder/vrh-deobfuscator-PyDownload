@@ -1,68 +1,51 @@
-import {
-    KTX2Decoder,
-    ZSTDDecoder
-} from "@babylonjs/ktx2decoder";
+import { KTX2Decoder, ZSTDDecoder } from "@babylonjs/ktx2decoder";
 
 import {
-    Accessor,
-    Extension,
-    NodeIO,
-    PropertyType,
-    VertexLayout,
+	Accessor,
+	Extension,
+	NodeIO,
+	PropertyType,
+	VertexLayout,
 } from "@gltf-transform/core";
-import {
-    KHRONOS_EXTENSIONS,
-    EXTTextureWebP
-} from "@gltf-transform/extensions";
-import {
-    existsSync
-} from "node:fs";
-import {
-    mkdir,
-    writeFile,
-    readFile,
-    unlink,
-    readdir
-} from "node:fs/promises";
+import { KHRONOS_EXTENSIONS, EXTTextureWebP } from "@gltf-transform/extensions";
+import { existsSync } from "node:fs";
+import { mkdir, writeFile, readFile, unlink, readdir } from "node:fs/promises";
 import crypto from "node:crypto";
-import {
-    createHash
-} from "node:crypto";
+import { createHash } from "node:crypto";
 import sharp from "sharp";
 import puppeteer from 'puppeteer';
 
-import {
-    default as initialize
-} from "./basis_transcoder.cjs";
+import { default as initialize } from "./basis_transcoder.cjs";
 
 const seedMapStartingState = {
-    1698286986: 21955,
-    1689231785: 32123,
-    1667373233: 5453,
-    legacy: 0,
+	1698286986: 21955,
+	1689231785: 32123,
+	1667373233: 5453,
+	legacy: 0,
 };
 
 const decryptAndDecodeVRMFile = async (fileContents) => {
-    console.log("Starting to decrypt and decode VRM file...");
-    const iv = fileContents.slice(0, 16);
-    const keyBytes = fileContents.slice(16, 48);
-    const fileBody = fileContents.slice(48, fileContents.byteLength);
+	console.log("Starting to decrypt and decode VRM file...");
+	const iv = fileContents.slice(0, 16);
+	const keyBytes = fileContents.slice(16, 48);
+	const fileBody = fileContents.slice(48, fileContents.byteLength);
 
-    const decryptionKey = await crypto.subtle.importKey(
-        "raw",
-        keyBytes,
-        "AES-CBC",
-        true,
-        ["decrypt"],
-    );
+	const decryptionKey = await crypto.subtle.importKey(
+		"raw",
+		keyBytes,
+		"AES-CBC",
+		true,
+		["decrypt"],
+	);
 
-    const decrypted = await crypto.subtle.decrypt({
-            name: "AES-CBC",
-            iv,
-        },
-        decryptionKey,
-        fileBody,
-    );
+	const decrypted = await crypto.subtle.decrypt(
+		{
+			name: "AES-CBC",
+			iv,
+		},
+		decryptionKey,
+		fileBody,
+	);
 
 	const decodedSize = new DataView(decrypted.slice(0, 4)).getUint32(0, true);
 	const decryptedBody = new Uint8Array(decrypted.slice(4));
@@ -74,45 +57,45 @@ const decryptAndDecodeVRMFile = async (fileContents) => {
 		console.log("zlib.zstdDecompress requires Node v23.8; fallback to ZSTDDecoder");
 	}
 
-    const decoder = new ZSTDDecoder();
-    await decoder.init();
+	const decoder = new ZSTDDecoder();
+	await decoder.init();
 
-    const decoded = decoder.decode(decryptedBody, decodedSize);
-    return decoded;
+	const decoded = decoder.decode(decryptedBody, decodedSize);
+	return decoded;
 };
 
 const computeSeedMap = async (inputValue, url) => {
-    console.log("Computing seed map...");
-    if (url?.includes("s=op")) {
-        const apiVersionOffset = ["/v1/", "/v2/"].some((prefix) =>
-                url.includes(prefix),
-            ) ?
-            6 :
-            5;
-        const path = url.split("/").slice(apiVersionOffset).join("/");
+	console.log("Computing seed map...");
+	if (url?.includes("s=op")) {
+		const apiVersionOffset = ["/v1/", "/v2/"].some((prefix) =>
+			url.includes(prefix),
+		)
+			? 6
+			: 5;
+		const path = url.split("/").slice(apiVersionOffset).join("/");
 
-        const hash = createHash("sha1");
-        hash.update(new TextEncoder().encode(path));
-        const hashBuffer = hash.digest().buffer;
+		const hash = createHash("sha1");
+		hash.update(new TextEncoder().encode(path));
+		const hashBuffer = hash.digest().buffer;
 
-        const hashInt = new DataView(hashBuffer).getInt32(
-            hashBuffer.byteLength - 4,
-            true,
-        );
-        return Object.fromEntries(
-            Object.entries(seedMapStartingState).map(([key, value]) => [
-                key,
-                value + hashInt,
-            ]),
-        );
-    }
+		const hashInt = new DataView(hashBuffer).getInt32(
+			hashBuffer.byteLength - 4,
+			true,
+		);
+		return Object.fromEntries(
+			Object.entries(seedMapStartingState).map(([key, value]) => [
+				key,
+				value + hashInt,
+			]),
+		);
+	}
 
-    return Object.fromEntries(
-        Object.entries(seedMapStartingState).map(([key, value]) => [
-            key,
-            value + Number.parseInt(inputValue, 10),
-        ]),
-    );
+	return Object.fromEntries(
+		Object.entries(seedMapStartingState).map(([key, value]) => [
+			key,
+			value + Number.parseInt(inputValue, 10),
+		]),
+	);
 };
 
 /**
@@ -136,7 +119,7 @@ async function captureSeedMap(modelUrl, options = {}) {
 		throw new Error('Invalid modelUrl');
 	}
 
-	const launchOptions = { headless: "new", args: ['--no-sandbox'], devtools: true };
+	const launchOptions = { args: ['--no-sandbox'], devtools: true };
 	if (chromePath && existsSync(chromePath)) launchOptions.executablePath = chromePath;
 	else if (process.platform === 'win32') {
 		const common = [
@@ -166,6 +149,7 @@ async function captureSeedMap(modelUrl, options = {}) {
 
 	async function trySetBreakpointOnScript(scriptUrl, scriptSource) {
 		if (breakpointSet) return false;
+        console.log("searching...")
 		const patterns = ['this._seedMap=e.seedMap'];
 		for (const p of patterns) {
 			const i = scriptSource.indexOf(p);
@@ -236,153 +220,153 @@ async function captureSeedMap(modelUrl, options = {}) {
 }
 
 class RandomGenerator {
-    constructor(seed = 0x5491333) {
-        this._x = 0x75bcd15;
-        this._y = 0x159a55e5;
-        this._z = 0x1f123bb5;
-        this._w = seed;
-    }
+	constructor(seed = 0x5491333) {
+		this._x = 0x75bcd15;
+		this._y = 0x159a55e5;
+		this._z = 0x1f123bb5;
+		this._w = seed;
+	}
 
-    next() {
-        return Math.abs(this._next()) / 0x80000000;
-    }
+	next() {
+		return Math.abs(this._next()) / 0x80000000;
+	}
 
-    nextInRange(range) {
-        return Math.floor(range * this.next()) % range;
-    }
+	nextInRange(range) {
+		return Math.floor(range * this.next()) % range;
+	}
 
-    _next() {
-        const temp = this._x ^ (this._x << 11);
-        this._x = this._y;
-        this._y = this._z;
-        this._z = this._w;
-        this._w = this._w ^ (this._w >>> 19) ^ (temp ^ (temp >>> 8));
-        return this._w;
-    }
+	_next() {
+		const temp = this._x ^ (this._x << 11);
+		this._x = this._y;
+		this._y = this._z;
+		this._z = this._w;
+		this._w = this._w ^ (this._w >>> 19) ^ (temp ^ (temp >>> 8));
+		return this._w;
+	}
 }
 
 class Deobfuscator {
-    constructor(seed) {
-        this.seed = seed;
-        this.metaTextureData = this._generateMetaTexture(seed);
-        this.prng = new RandomGenerator(seed);
-    }
+	constructor(seed) {
+		this.seed = seed;
+		this.metaTextureData = this._generateMetaTexture(seed);
+		this.prng = new RandomGenerator(seed);
+	}
 
-    _generateMetaTexture(seed) {
-        console.log("Generating meta texture...");
-        const prng = new RandomGenerator(seed);
-        const data = new Uint8Array(256 * 256 * 4);
-        for (let i = 0; i < 256 * 256; i++) {
-            data[i * 4] = prng.nextInRange(256); // R
-            data[i * 4 + 1] = prng.nextInRange(256); // G
-            data[i * 4 + 2] = prng.nextInRange(256); // B
-            data[i * 4 + 3] = 255; // A
-        }
-        return data;
-    }
+	_generateMetaTexture(seed) {
+		console.log("Generating meta texture...");
+		const prng = new RandomGenerator(seed);
+		const data = new Uint8Array(256 * 256 * 4);
+		for (let i = 0; i < 256 * 256; i++) {
+			data[i * 4] = prng.nextInRange(256); // R
+			data[i * 4 + 1] = prng.nextInRange(256); // G
+			data[i * 4 + 2] = prng.nextInRange(256); // B
+			data[i * 4 + 3] = 255; // A
+		}
+		return data;
+	}
 
-    _getMetaPosition(uVal, vVal) {
-        const index = (vVal * 256 + uVal) * 4;
-        const r = this.metaTextureData[index];
-        const g = this.metaTextureData[index + 1];
-        const b = this.metaTextureData[index + 2];
-        return [r / 255, g / 255, b / 255];
-    }
+	_getMetaPosition(uVal, vVal) {
+		const index = (vVal * 256 + uVal) * 4;
+		const r = this.metaTextureData[index];
+		const g = this.metaTextureData[index + 1];
+		const b = this.metaTextureData[index + 2];
+		return [r / 255, g / 255, b / 255];
+	}
 
-    processVertexDisplacement(accessor, vertexCount, meta, version, processed) {
-        const array = accessor.getArray();
+	processVertexDisplacement(accessor, vertexCount, meta, version, processed) {
+		const array = accessor.getArray();
 
-        let adjustComponent;
-        switch (version) {
-            case "3.0":
-                adjustComponent = (value, meta) => {
-                    return value - Math.sign(value) * meta / 16;
-                };
-                break;
-            case "4.0":
-                adjustComponent = (value, meta) => {
-                    return value * (2 ** (meta / 8));
-                };
-                break;
-            default:
-                throw new Error(`Unknown obfuscation version: ${version}`);
-        }
+		let adjustComponent;
+		switch (version) {
+			case "3.0":
+				adjustComponent = (value, meta) => {
+					return value - Math.sign(value) * meta / 16;
+				};
+				break;
+			case "4.0":
+				adjustComponent = (value, meta) => {
+					return value * (2 ** (meta / 8));
+				};
+				break;
+			default:
+				throw new Error(`Unknown obfuscation version: ${version}`);
+		}
 
 
-        for (let i = 0; i < vertexCount; i++) {
-            const uVal = Math.floor(meta[i * 2] * 256);
-            const vVal = Math.floor(meta[i * 2 + 1] * 256);
-            const [x, y, z] = this._getMetaPosition(uVal, vVal);
+		for (let i = 0; i < vertexCount; i++) {
+			const uVal = Math.floor(meta[i * 2] * 256);
+			const vVal = Math.floor(meta[i * 2 + 1] * 256);
+			const [x, y, z] = this._getMetaPosition(uVal, vVal);
 
-            if (
-                processed[0].has(array[i * 3]) &&
-                processed[1].has(array[i * 3 + 1]) &&
-                processed[2].has(array[i * 3 + 2])
-            ) {
-                continue;
-            }
+			if (
+				processed[0].has(array[i * 3]) &&
+				processed[1].has(array[i * 3 + 1]) &&
+				processed[2].has(array[i * 3 + 2])
+			) {
+				continue;
+			}
 
-            array[i * 3] = adjustComponent(array[i * 3], x);
-            array[i * 3 + 1] = adjustComponent(array[i * 3 + 1], y);
-            array[i * 3 + 2] = adjustComponent(array[i * 3 + 2], z);
+			array[i * 3] = adjustComponent(array[i * 3], x);
+			array[i * 3 + 1] = adjustComponent(array[i * 3 + 1], y);
+			array[i * 3 + 2] = adjustComponent(array[i * 3 + 2], z);
 
-            processed[0].add(array[i * 3]);
-            processed[1].add(array[i * 3 + 1]);
-            processed[2].add(array[i * 3 + 2]);
-        }
+			processed[0].add(array[i * 3]);
+			processed[1].add(array[i * 3 + 1]);
+			processed[2].add(array[i * 3 + 2]);
+		}
 
-        accessor.setArray(array);
-    }
+		accessor.setArray(array);
+	}
 
-    processPrimitive(document, primitive) {
-        const vertexCount = primitive.getAttribute("POSITION").getCount();
-        const randomGenerator = new RandomGenerator(this.seed);
-        const metaData = new Float32Array(2 * vertexCount);
+	processPrimitive(document, primitive) {
+		const vertexCount = primitive.getAttribute("POSITION").getCount();
+		const randomGenerator = new RandomGenerator(this.seed);
+		const metaData = new Float32Array(2 * vertexCount);
 
-        for (let i = 0; i < 2 * vertexCount; i++) {
-            metaData[i] = (randomGenerator.nextInRange(256) + 0.5) / 256;
-        }
+		for (let i = 0; i < 2 * vertexCount; i++) {
+			metaData[i] = (randomGenerator.nextInRange(256) + 0.5) / 256;
+		}
 
-        const accessor = document.createAccessor();
-        accessor.setType(Accessor.Type.VEC2);
-        accessor.setArray(metaData);
+		const accessor = document.createAccessor();
+		accessor.setType(Accessor.Type.VEC2);
+		accessor.setArray(metaData);
 
-        primitive.setAttribute("META", accessor);
-    }
+		primitive.setAttribute("META", accessor);
+	}
 
-    processDocument(document, version) {
-        const root = document.getRoot();
+	processDocument(document, version) {
+		const root = document.getRoot();
 
-        for (const mesh of root.listMeshes()) {
-            for (const primitive of mesh.listPrimitives()) {
-                this.processPrimitive(document, primitive);
-            }
-        }
+		for (const mesh of root.listMeshes()) {
+			for (const primitive of mesh.listPrimitives()) {
+				this.processPrimitive(document, primitive);
+			}
+		}
 
-        const processed = [new Set(), new Set(), new Set()];
+		const processed = [new Set(), new Set(), new Set()];
 
-        console.log("Processing vertex displacement...");
-        for (const mesh of root.listMeshes()) {
-            for (const primitive of mesh.listPrimitives()) {
-                const position = primitive.getAttribute("POSITION");
-                if (!position) {
-                    continue;
-                }
+		console.log("Processing vertex displacement...");
+		for (const mesh of root.listMeshes()) {
+			for (const primitive of mesh.listPrimitives()) {
+				const position = primitive.getAttribute("POSITION");
+				if (!position) {
+					continue;
+				}
 
-                const meta = primitive.getAttribute("META");
-                const vertexCount = position.getCount();
-                this.processVertexDisplacement(
-                    position,
-                    vertexCount,
-                    meta.getArray(),
-                    version,
-                    processed,
-                );
+				const meta = primitive.getAttribute("META");
+				const vertexCount = position.getCount();
+				this.processVertexDisplacement(
+					position,
+					vertexCount,
+					meta.getArray(),
+					version,
+					processed,
+				);
 
-                meta.dispose();
-            }
-        }
-    }
+				meta.dispose();
+			}
+		}
+	}
 }
 
 const makeSafeFilename = (name) => {
@@ -408,37 +392,36 @@ const PIXIV_BASIS_EXTENSION_NAME = "PIXIV_texture_basis";
 
 // Base class - preserve respective json.extensions[] data
 class PreservationExtension extends Extension {
-    static EXTENSION_NAME = null;
-    extensionName = null;
+	static EXTENSION_NAME = null;
+	extensionName = null;
 
-    read(context) {
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	read(context) {
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
-        this.data = json.extensions[this.extensionName];
-        return this;
-    }
+		this.data = json.extensions[this.extensionName];
+		return this;
+	}
 
-    // Write data during export
-    write(context) {
-        const jsonDoc = context.jsonDoc;
-        const data = this.data;
+	// Write data during export
+	write(context) {
+		const jsonDoc = context.jsonDoc;
+		const data = this.data;
 
-        if (data) {
-            jsonDoc.json.extensions = jsonDoc.json.extensions || {};
-            jsonDoc.json.extensions[this.extensionName] = data;
-            if (existsSync("./debug") === false) mkdir("./debug");
-            writeFile(`./debug/${this.extensionName.toLowerCase()}.json`, JSON.stringify(data, null, 2));
-        }
+		if (data) {
+			jsonDoc.json.extensions = jsonDoc.json.extensions || {};
+			jsonDoc.json.extensions[this.extensionName] = data;
+			if (existsSync("./debug") === false) mkdir("./debug");
+			writeFile(`./debug/${this.extensionName.toLowerCase()}.json`, JSON.stringify(data, null, 2));
+		}
 
-        return this;
-    }
+		return this;
+	}
 }
 
 // Common pool for extensions that need textures to be patched first
 class TexturePoolExtension extends PreservationExtension {
-    static _vrmTextures = null;
-
+	static _vrmTextures = null;
 
 	_saveTextures = (json) => {
 		if (this._vrmTextures) return;
@@ -449,31 +432,31 @@ class TexturePoolExtension extends PreservationExtension {
 		}));
 	}
 
-    _reapplyTextures = (json) => {
-        if (!this._vrmTextures) return;
-        const sourceToIdx = {};
+	_reapplyTextures = (json) => {
+		if (!this._vrmTextures) return;
+		const sourceToIdx = {};
 
-        json.textures.forEach((tex, i) => sourceToIdx[tex.source] = i);
-        this._vrmTextures.forEach(tex => {
-            if (sourceToIdx[tex.source] !== undefined) {
-                json.textures[sourceToIdx[tex.source]] = tex;
-            } else {
-                sourceToIdx[tex.source] = json.textures.push(tex) - 1;
-            }
-        });
+		json.textures.forEach((tex, i) => sourceToIdx[tex.source] = i);
+		this._vrmTextures.forEach(tex => {
+			if (sourceToIdx[tex.source] !== undefined) {
+				json.textures[sourceToIdx[tex.source]] = tex;
+			} else {
+				sourceToIdx[tex.source] = json.textures.push(tex) - 1;
+			}
+		});
 
-        this._vrmTextures = null;
-    }
+		this._vrmTextures = null;
+	}
 }
 
 export class VRM_v0_Extension extends TexturePoolExtension {
 	static EXTENSION_NAME = VRM_EXTENSION_NAME;
 	extensionName = VRM_EXTENSION_NAME;
 
-    read(context) {
-        super.read(context);
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	read(context) {
+		super.read(context);
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
 		this._saveTextures(json);
 		this.samplers = json.samplers || [];
@@ -487,8 +470,8 @@ export class VRM_v0_Extension extends TexturePoolExtension {
 			}
 		}
 
-        return this;
-    }
+		return this;
+	}
 
 	write(context) {
 		const jsonDoc = context.jsonDoc;
@@ -511,79 +494,79 @@ export class VRM_v0_Extension extends TexturePoolExtension {
 
 		super.write(context);
 
-        return this;
-    }
+		return this;
+	}
 }
 
 export class VRM_v1_Extension extends TexturePoolExtension {
-    static EXTENSION_NAME = "VRMC_vrm";
-    extensionName = "VRMC_vrm";
+	static EXTENSION_NAME = "VRMC_vrm";
+	extensionName = "VRMC_vrm";
 
-    read(context) {
-        super.read(context);
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	read(context) {
+		super.read(context);
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
-        this._saveTextures(json);
-        this.samplers = json.samplers || [];
+		this._saveTextures(json);
+		this.samplers = json.samplers || [];
 
-        return this;
-    }
+		return this;
+	}
 
-    write(context) {
-        super.write(context);
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	write(context) {
+		super.write(context);
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
-        this._reapplyTextures(json);
-        json.samplers = this.samplers || [];
+		this._reapplyTextures(json);
+		json.samplers = this.samplers || [];
 
-        return this;
-    }
+		return this;
+	}
 }
 
 export class VRM_v1_materials_mtoon_Extension extends TexturePoolExtension {
-    static EXTENSION_NAME = "VRMC_materials_mtoon";
-    extensionName = "VRMC_materials_mtoon";
-    prereadTypes = [PropertyType.MESH];
-    prewriteTypes = [PropertyType.MESH];
+	static EXTENSION_NAME = "VRMC_materials_mtoon";
+	extensionName = "VRMC_materials_mtoon";
+	prereadTypes = [PropertyType.MESH];
+	prewriteTypes = [PropertyType.MESH];
 
-    preread(context) {
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	preread(context) {
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
-        this._saveTextures(json);
+		this._saveTextures(json);
 
-        this.materials_mtoon = {};
-        for (let idx in json.materials) {
-            let mat = json.materials[idx];
-            if (!mat.extensions?.VRMC_materials_mtoon) continue;
+		this.materials_mtoon = {};
+		for (let idx in json.materials) {
+			let mat = json.materials[idx];
+			if (!mat.extensions?.VRMC_materials_mtoon) continue;
 
-            let ext = mat.extensions.VRMC_materials_mtoon;
-            for (let k of Object.keys(ext)) {
-                if (!k.match(/^.*Texture$/)) continue;
-                ext[k]._source = json.textures[ext[k].index].source;
-            }
-            this.materials_mtoon[idx] = ext;
-        }
-    }
+			let ext = mat.extensions.VRMC_materials_mtoon;
+			for (let k of Object.keys(ext)) {
+				if (!k.match(/^.*Texture$/)) continue;
+				ext[k]._source = json.textures[ext[k].index].source;
+			}
+			this.materials_mtoon[idx] = ext;
+		}
+	}
 
-    prewrite(context) {
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	prewrite(context) {
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
-        this._reapplyTextures(json);
+		this._reapplyTextures(json);
 
-        const sourceToIdx = {};
-        json.textures.forEach((tex, i) => sourceToIdx[tex.source] = i);
+		const sourceToIdx = {};
+		json.textures.forEach((tex, i) => sourceToIdx[tex.source] = i);
 
-        for (let mat of this.document.getRoot().listMaterials()) {
-            const idx = context.materialIndexMap.get(mat);
-            if (!this.materials_mtoon[idx]) continue;
+		for (let mat of this.document.getRoot().listMaterials()) {
+			const idx = context.materialIndexMap.get(mat);
+			if (!this.materials_mtoon[idx]) continue;
 
-            json.materials[idx].extensions ||= {};
-            json.materials[idx].extensions.VRMC_materials_mtoon = this.materials_mtoon[idx];
-            const ext = json.materials[idx].extensions.VRMC_materials_mtoon;
+			json.materials[idx].extensions ||= {};
+			json.materials[idx].extensions.VRMC_materials_mtoon = this.materials_mtoon[idx];
+			const ext = json.materials[idx].extensions.VRMC_materials_mtoon;
 
 			for (let k of Object.keys(ext)) {
 				if (!k.match(/^.*Texture$/)) continue;
@@ -595,114 +578,113 @@ export class VRM_v1_materials_mtoon_Extension extends TexturePoolExtension {
 }
 
 export class VRM_v1_node_constraint_Extension extends PreservationExtension {
-    static EXTENSION_NAME = "VRMC_node_constraint";
-    extensionName = "VRMC_node_constraint";
+	static EXTENSION_NAME = "VRMC_node_constraint";
+	extensionName = "VRMC_node_constraint";
 
-    read(context) {
-        super.read(context);
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	read(context) {
+		super.read(context);
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
-        this.node_constraint = {};
-        for (let idx in json.nodes) {
-            let node = json.nodes[idx];
-            if (!node.extensions?.VRMC_node_constraint) continue;
+		this.node_constraint = {};
+		for (let idx in json.nodes) {
+			let node = json.nodes[idx];
+			if (!node.extensions?.VRMC_node_constraint) continue;
 
-            let ext = node.extensions.VRMC_node_constraint;
-            this.node_constraint[idx] = ext;
-        }
-    }
+			let ext = node.extensions.VRMC_node_constraint;
+			this.node_constraint[idx] = ext;
+		}
+	}
 
 	write(context) {
 		super.write(context);
 		const jsonDoc = context.jsonDoc;
 		const json = jsonDoc.json;
 
-        for (let node of this.document.getRoot().listNodes()) {
-            const idx = context.nodeIndexMap.get(node);
-            if (!this.node_constraint[idx]) continue;
+		for (let node of this.document.getRoot().listNodes()) {
+			const idx = context.nodeIndexMap.get(node);
+			if (!this.node_constraint[idx]) continue;
 
-            json.nodes[idx].extensions ||= {};
-            json.nodes[idx].extensions.VRMC_node_constraint = this.node_constraint[idx];
-        }
-    }
+			json.nodes[idx].extensions ||= {};
+			json.nodes[idx].extensions.VRMC_node_constraint = this.node_constraint[idx];
+		}
+	}
 }
 
 export class VRM_v1_materials_hdr_emissiveMultiplier_Extension extends TexturePoolExtension {
-    static EXTENSION_NAME = "VRMC_materials_hdr_emissiveMultiplier";
-    extensionName = "VRMC_materials_hdr_emissiveMultiplier";
-    prereadTypes = [PropertyType.MESH];
-    prewriteTypes = [PropertyType.MESH];
+	static EXTENSION_NAME = "VRMC_materials_hdr_emissiveMultiplier";
+	extensionName = "VRMC_materials_hdr_emissiveMultiplier";
+	prereadTypes = [PropertyType.MESH];
+	prewriteTypes = [PropertyType.MESH];
 
-    preread(context) {
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	preread(context) {
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
-        this._saveTextures(json);
+		this._saveTextures(json);
 
-        this.emissiveMultiplier = {};
-        for (let idx in json.materials) {
-            let mat = json.materials[idx];
-            if (!mat.extensions?.VRMC_materials_hdr_emissiveMultiplier) continue;
+		this.emissiveMultiplier = {};
+		for (let idx in json.materials) {
+			let mat = json.materials[idx];
+			if (!mat.extensions?.VRMC_materials_hdr_emissiveMultiplier) continue;
 
-            let ext = mat.extensions.VRMC_materials_hdr_emissiveMultiplier;
-            this.emissiveMultiplier[idx] = ext;
-        }
-    }
+			let ext = mat.extensions.VRMC_materials_hdr_emissiveMultiplier;
+			this.emissiveMultiplier[idx] = ext;
+		}
+	}
 
-    prewrite(context) {
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	prewrite(context) {
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
-        this._reapplyTextures(json);
+		this._reapplyTextures(json);
 
-        for (let mat of this.document.getRoot().listMaterials()) {
-            const idx = context.materialIndexMap.get(mat);
-            if (!this.emissiveMultiplier[idx]) continue;
+		for (let mat of this.document.getRoot().listMaterials()) {
+			const idx = context.materialIndexMap.get(mat);
+			if (!this.emissiveMultiplier[idx]) continue;
 
-            json.materials[idx].extensions ||= {};
-            json.materials[idx].extensions.VRMC_materials_hdr_emissiveMultiplier = this.emissiveMultiplier[idx];
-        }
-    }
+			json.materials[idx].extensions ||= {};
+			json.materials[idx].extensions.VRMC_materials_hdr_emissiveMultiplier = this.emissiveMultiplier[idx];
+		}
+	}
 }
 
 export class PIXIVExtension extends Extension {
-    static EXTENSION_NAME = PIXIV_EXTENSION_NAME;
-    extensionName = PIXIV_EXTENSION_NAME;
+	static EXTENSION_NAME = PIXIV_EXTENSION_NAME;
+	extensionName = PIXIV_EXTENSION_NAME;
 
-    read(context) {
-        const jsonDoc = context.jsonDoc;
-        const json = jsonDoc.json;
+	read(context) {
+		const jsonDoc = context.jsonDoc;
+		const json = jsonDoc.json;
 
-        this.data = json.extensions[PIXIV_EXTENSION_NAME];
+		this.data = json.extensions[PIXIV_EXTENSION_NAME];
 
-        return this;
-    }
+		return this;
+	}
 
-    write() {
-        throw "This extension must be removed prior to writing.";
-    }
+	write() {
+		throw "This extension must be removed prior to writing.";
+	}
 }
 
 export class PIXIVBasisExtension extends Extension {
-    static EXTENSION_NAME = PIXIV_BASIS_EXTENSION_NAME;
-    extensionName = PIXIV_BASIS_EXTENSION_NAME;
-    prereadTypes = [PropertyType.TEXTURE];
+	static EXTENSION_NAME = PIXIV_BASIS_EXTENSION_NAME;
+	extensionName = PIXIV_BASIS_EXTENSION_NAME;
+	prereadTypes = [PropertyType.TEXTURE];
 
-    preread(context) {
-        console.log("Detected PIXIV basis extension, fixing it up...");
-        const textures = context.jsonDoc.json.textures || [];
-        for (const texture of textures) {
-            if (texture.extensions?.PIXIV_texture_basis) {
-                texture.source = texture.extensions.PIXIV_texture_basis.source;
-            }
-        }
+	preread(context) {
+		console.log("Detected PIXIV basis extension, fixing it up...");
+		const textures = context.jsonDoc.json.textures || [];
+		for (const texture of textures) {
+			if (texture.extensions?.PIXIV_texture_basis) {
+				texture.source = texture.extensions.PIXIV_texture_basis.source;
+			}
+		}
 
-        context.jsonDoc.json.textures = textures;
+		context.jsonDoc.json.textures = textures;
 
-        return this;
-    }
-
+		return this;
+	}
 
 	read() { }
 	write() {
@@ -711,8 +693,7 @@ export class PIXIVBasisExtension extends Extension {
 }
 
 async function deobfuscateVRoidHubGLB(id) {
-    console.log("Starting deobfuscation process for VRoid Hub GLB...");
-
+	console.log("Starting deobfuscation process for VRoid Hub GLB...");
 
 	let vrmData = null;
 	let seedMap = null;
@@ -728,7 +709,6 @@ async function deobfuscateVRoidHubGLB(id) {
 	} else {
 		await mkdir("./debug");
 	}
-
 
 	if (existsSync("./cache") === false) await mkdir("./cache");
 	if (existsSync(`./cache/${id}.json`) === true) {
@@ -753,15 +733,13 @@ async function deobfuscateVRoidHubGLB(id) {
 			response = await fetch(`https://hub.vroid.com/api/character_models/${id}/preview`, options);
 		}
 
-        vrmData = await response.arrayBuffer();
-        const vrmPath = `./cache/${id}.glb`;
-        const vrmInfoPath = `./cache/${id}.json`;
+		vrmData = await response.arrayBuffer();
+		const vrmPath = `./cache/${id}.glb`;
+		const vrmInfoPath = `./cache/${id}.json`;
 
-        if (!response.ok) throw new Error("Failed to grab the encrypted VRM.");
+		if (!response.ok) throw new Error("Failed to grab the encrypted VRM.");
 
-        vrmData = await decryptAndDecodeVRMFile(vrmData);
-
-
+		vrmData = await decryptAndDecodeVRMFile(vrmData);
 
 		await writeFile(vrmPath, vrmData);
 		await writeFile(
@@ -773,66 +751,61 @@ async function deobfuscateVRoidHubGLB(id) {
 		console.log(`Fetched and decrypted VRM data for ID: ${id}.`);
 	}
 
+	// Other subextensions that just need their json.extension[] data transferred
+	// https://github.com/vrm-c/vrm-specification/tree/master/specification
+	const VRM_v1_SubExtensions = [];
+	const VRM_v1_SUBEXTENSION_NAMES = [
+		"VRMC_springBone",
+		"VRMC_springBone_limit",
+		"VRMC_springBone_extended_collider",
+		"VRMC_vrm_animation"
+	]
+	for (let extName of VRM_v1_SUBEXTENSION_NAMES) {
+		VRM_v1_SubExtensions.push(
+			class VRM_SubExtension extends PreservationExtension {
+				static EXTENSION_NAME = extName;
+				extensionName = extName;
+			}
+		)
+	}
 
-    // Other subextensions that just need their json.extension[] data transferred
-    // https://github.com/vrm-c/vrm-specification/tree/master/specification
-    const VRM_v1_SubExtensions = [];
-    const VRM_v1_SUBEXTENSION_NAMES = [
-        "VRMC_springBone",
-        "VRMC_springBone_limit",
-        "VRMC_springBone_extended_collider",
-        "VRMC_vrm_animation"
-    ]
-    for (let extName of VRM_v1_SUBEXTENSION_NAMES) {
-        VRM_v1_SubExtensions.push(
-            class VRM_SubExtension extends PreservationExtension {
-                static EXTENSION_NAME = extName;
-                extensionName = extName;
-            }
-        )
-    }
+	const io = new NodeIO().registerExtensions([
+		...KHRONOS_EXTENSIONS,
+		EXTTextureWebP,
+		VRM_v0_Extension,
+		VRM_v1_Extension,
+		VRM_v1_materials_mtoon_Extension,
+		VRM_v1_node_constraint_Extension,
+		VRM_v1_materials_hdr_emissiveMultiplier_Extension,
+		PIXIVExtension,
+		PIXIVBasisExtension,
+	]).registerExtensions(
+		VRM_v1_SubExtensions
+	);
 
-    const io = new NodeIO().registerExtensions([
-        ...KHRONOS_EXTENSIONS,
-        EXTTextureWebP,
-        VRM_v0_Extension,
-        VRM_v1_Extension,
-        VRM_v1_materials_mtoon_Extension,
-        VRM_v1_node_constraint_Extension,
-        VRM_v1_materials_hdr_emissiveMultiplier_Extension,
-        PIXIVExtension,
-        PIXIVBasisExtension,
-    ]).registerExtensions(
-        VRM_v1_SubExtensions
-    );
+	// Read the GLB file
+	console.log("Reading GLB file...");
+	const doc = await io.readBinary(vrmData);
+	const extensions = doc.getRoot().listExtensionsUsed();
+	const basisUExtension = extensions.find(
+		(ext) => ext.extensionName === "KHR_texture_basisu",
+	);
+	basisUExtension?.dispose();
 
-    // Read the GLB file
-    console.log("Reading GLB file...");
-    const doc = await io.readBinary(vrmData);
-    const extensions = doc.getRoot().listExtensionsUsed();
-    const basisUExtension = extensions.find(
-        (ext) => ext.extensionName === "KHR_texture_basisu",
-    );
-    basisUExtension?.dispose();
+	const pixivExtension = extensions.find(
+		(ext) => ext.extensionName === PIXIV_EXTENSION_NAME,
+	);
+	const { timestamp, version } = pixivExtension.data;
+	pixivExtension?.dispose();
 
-    const pixivExtension = extensions.find(
-        (ext) => ext.extensionName === PIXIV_EXTENSION_NAME,
-    );
-    const {
-        timestamp,
-        version
-    } = pixivExtension.data;
-    pixivExtension?.dispose();
+	const pixivBasisExtension = extensions.find(
+		(ext) => ext.extensionName === PIXIV_BASIS_EXTENSION_NAME,
+	);
+	pixivBasisExtension?.dispose();
 
-    const pixivBasisExtension = extensions.find(
-        (ext) => ext.extensionName === PIXIV_BASIS_EXTENSION_NAME,
-    );
-    pixivBasisExtension?.dispose();
+	console.log("Obfuscation version and timestamp:", version, timestamp);
 
-    console.log("Obfuscation version and timestamp:", version, timestamp);
-
-    const seed = seedMap[timestamp];
-
+	const seed = seedMap[timestamp];
 
 	if (seed === undefined) {
 		console.log(`Seed not found for timestamp: ${timestamp}`);
@@ -867,90 +840,87 @@ async function deobfuscateVRoidHubGLB(id) {
 	const deobfuscator = new Deobfuscator(finalSeed);
 	deobfuscator.processDocument(doc, version);
 
-    const decoder = new KTX2Decoder();
-    const {
-        BasisFile,
-        initializeBasis
-    } = await initialize();
-    initializeBasis();
+	const decoder = new KTX2Decoder();
+	const { BasisFile, initializeBasis } = await initialize();
+	initializeBasis();
 
-    const textures = doc.getRoot().listTextures() || [];
-    console.log("Decoding textures...");
-    for (const texture of textures) {
-        const image = texture.getImage();
-        const mime = texture.getMimeType();
+	const textures = doc.getRoot().listTextures() || [];
+	console.log("Decoding textures...");
+	for (const texture of textures) {
+		const image = texture.getImage();
+		const mime = texture.getMimeType();
 
-        if (!image) continue;
+		if (!image) continue;
 
-        if (mime === "image/ktx2") {
-            const decoded = await decoder.decode(image, {
-                ASTC: true,
-                BC7: true,
-                ETC2: true,
-                ETC1S: true,
-                PVRTC: true,
-                S3TC: true,
-                UASTC: true,
-            });
+		if (mime === "image/ktx2") {
+			const decoded = await decoder.decode(image, {
+				ASTC: true,
+				BC7: true,
+				ETC2: true,
+				ETC1S: true,
+				PVRTC: true,
+				S3TC: true,
+				UASTC: true,
+			});
 
-            const pngBuffer = await sharp(decoded.mipmaps[0].data, {
-                    raw: {
-                        width: decoded.width,
-                        height: decoded.height,
-                        channels: 4,
-                    },
-                })
-                .png()
-                .toBuffer();
+			const pngBuffer = await sharp(decoded.mipmaps[0].data, {
+				raw: {
+					width: decoded.width,
+					height: decoded.height,
+					channels: 4,
+				},
+			})
+				.png()
+				.toBuffer();
 
-            await writeTexture(texture, "ktx2", pngBuffer);
+			await writeTexture(texture, "ktx2", pngBuffer);
 
-            texture.setImage(pngBuffer);
-            texture.setMimeType("image/png");
-        } else if (mime === "image/basis") {
+			texture.setImage(pngBuffer);
+			texture.setMimeType("image/png");
+		} else if (mime === "image/basis") {
 
-            const dv = new DataView(image.buffer, image.byteOffset, image.byteLength);
-            const magic = dv.getUint32(0);
-            if (magic === 0x89504e47) {
-                console.log("Fixing mime type for PNG", texture.getName());
-                texture.setMimeType("image/png");
-                await writeTexture(texture, "png", image);
-                continue;
-            } else if (magic === 0xffd8ffdb || magic === 0xffd8ffe0 || magic === 0xffd8ffee || magic === 0xffd8ffe1) {
-                console.log("Fixing mime type for JPEG", texture.getName());
-                texture.setMimeType("image/jpeg");
-                await writeTexture(texture, "jpeg", image, 'jpg');
-                continue;
-            }
+			const dv = new DataView(image.buffer, image.byteOffset, image.byteLength);
+			const magic = dv.getUint32(0);
+			if (magic === 0x89504e47) {
+				console.log("Fixing mime type for PNG", texture.getName());
+				texture.setMimeType("image/png");
+				await writeTexture(texture, "png", image);
+				continue;
+			} else if (magic === 0xffd8ffdb || magic === 0xffd8ffe0 || magic === 0xffd8ffee || magic === 0xffd8ffe1) {
+				console.log("Fixing mime type for JPEG", texture.getName());
+				texture.setMimeType("image/jpeg");
+				await writeTexture(texture, "jpeg", image, 'jpg');
+				continue;
+			}
 
-            const basisFile = new BasisFile(image);
+			const basisFile = new BasisFile(image);
 
-            const width = basisFile.getImageWidth(0, 0);
-            const height = basisFile.getImageHeight(0, 0);
-            basisFile.startTranscoding();
+			const width = basisFile.getImageWidth(0, 0);
+			const height = basisFile.getImageHeight(0, 0);
+			basisFile.startTranscoding();
 
-            const dstSize = width * height * 4;
-            const dst = new Uint8Array(dstSize);
+			const dstSize = width * height * 4;
+			const dst = new Uint8Array(dstSize);
 
-            if (!basisFile.transcodeImage(dst, 0, 0, 13, 0, 0)) {
-                throw new Error("Failed to transcode image");
-            }
+			if (!basisFile.transcodeImage(dst, 0, 0, 13, 0, 0)) {
+				throw new Error("Failed to transcode image");
+			}
 
-            const pngBuffer = await sharp(dst, {
-                    raw: {
-                        width,
-                        height,
-                        channels: 4,
-                    },
-                })
-                .png()
-                .toBuffer();
+			const pngBuffer = await sharp(dst, {
+				raw: {
+					width,
+					height,
+					channels: 4,
+				},
+			})
+				.png()
+				.toBuffer();
 
-            await writeTexture(texture, "basis", pngBuffer);
+			await writeTexture(texture, "basis", pngBuffer);
 
-            texture.setImage(pngBuffer);
-            texture.setMimeType("image/png");
-        } else if (mime === "image/png") {
+			texture.setImage(pngBuffer);
+			texture.setMimeType("image/png");
+		} else if (mime === "image/png") {
 
 			const dv = new DataView(image.buffer, image.byteOffset, image.byteLength);
 			const magic = dv.getUint32(0);
@@ -966,92 +936,22 @@ async function deobfuscateVRoidHubGLB(id) {
 		}
 	}
 
-            if (magic === 0x52494646) {
-                console.log("Convering WEBP to PNG:", texture.getName());
-                const pngBuffer = await sharp(image)
-                    .png({
-                        compressionLevel: 9,
-                        adaptiveFiltering: true,
-                        force: true
-                    })
-                    .toBuffer();
-                texture.setImage(pngBuffer);
-                await writeTexture(texture, "webp", pngBuffer);
-            }
-        }
-    }
+	io.setVertexLayout(VertexLayout.SEPARATE);
+	const outputGLB = await io.writeBinary(doc);
+	writeFile(`./${id}.deob.vrm`, outputGLB);
 
-    io.setVertexLayout(VertexLayout.SEPARATE);
-    const outputGLB = await io.writeBinary(doc);
-    writeFile(`./[${id}].${charname}.deobf.vrm`, outputGLB);
-
-    console.log(
-        `Deobfuscation process for VRoid Hub GLB with ID: ${id} completed.`,
-    );
-    return outputGLB;
+	console.log(
+		`Deobfuscation process for VRoid Hub GLB with ID: ${id} completed.`,
+	);
+	return outputGLB;
 }
 
 const parseVRoidHubURL = (url) =>
-    url.replace(/\/+$/, "").split("/").slice(-1)[0];
-
-//ai gengen
-import axios from "axios";
-import * as cheerio from "cheerio";
-
-/**
- * Fetches and extracts the content of elements with a specific class name from a given URL.
- * @param {string} url - The URL to fetch the HTML content from.
- * @param {string} className - The class name of the elements to extract content from.
- * @returns {Promise<string[]>} - A promise that resolves to an array of content strings.
- */
-export const getClassContentFromURL = async (url, className) => {
-    try {
-	//console.log("ModelLink:", url);
-        // Fetch the HTML content of the URL
-        const {
-            data: html
-        } = await axios.get(url, {
-            responseType: 'document'
-        });
-        const $ = cheerio.load(html);
-        //console.log(html);
-	    //writeFile('./FUCK.html.txt', html)
-        // Extract the content of elements with the specified class name
-        const charname_elem = $('.sc-b2676ded-3');
-        const CharNameContent = charname_elem.text();
-        const charvar_elem = $('.sc-b2676ded-7');
-        const CharVariationContent = charvar_elem.text();
-        const author_elem = $('.sc-b2676ded-5');
-        const AuthorContent =  author_elem.text();
-        let finalcontent = CharNameContent + "_" + CharVariationContent + "--" + AuthorContent;
-        console.log("You are going to download:", finalcontent);
-        const char3rdparty = $('.sc-36e1e351-16');
-        const Char3rdPartyContent = char3rdparty.text();
-        const char3rdpartyallowdownload = $('.sc-36e1e351-17');
-        const Char3rdPartyAllowDownloadContent = char3rdpartyallowdownload.text();
-        if (Char3rdPartyContent == "NG") {
-            console.log("This character is view only. Using optimized model method....");
-        } else {
-            if (Char3rdPartyAllowDownloadContent == '(ダウンロードはNG)') {
-                console.log("This character is not allowed to be downloaded by website.Recommend using game method... ");
-                throw new Error('Character is accessable using other methods');
-            } else {
-                console.log(Char3rdPartyAllowDownloadContent);
-                console.log("This character is allowed to be downloaded by website. Go to website to download it!");
-                throw new Error('Character is accessable using other methods');
-            }
-        }
-        return finalcontent;
-    } catch (error) {
-        console.error('Error fetching or parsing the URL:', error);
-        return [];
-    }
-};
-
-
+	url.replace(/\/+$/, "").split("/").slice(-1)[0];
 
 const target = process.argv.slice(-1)[0];
 if (!target.startsWith("https://") && Number.isNaN(Number.parseInt(target))) {
-    throw new Error("That's not a valid VRoid Hub URL.");
+	throw new Error("That's not a valid VRoid Hub URL.");
 }
+
 deobfuscateVRoidHubGLB(parseVRoidHubURL(target));
