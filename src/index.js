@@ -850,7 +850,7 @@ async function deobfuscateVRoidHubGLB(id) {
 	const finalSeed = (typeof resolvedSeed !== 'undefined') ? resolvedSeed : seed;
 	if (finalSeed === undefined) throw new Error(`Seed resolution failed for timestamp: ${timestamp}`);
 
-	const deobfuscator = new Deobfuscator(finalSeed);
+	const deobfuscator = new Deobfuscator(finalSeed, timestamp);
 	deobfuscator.processDocument(doc, version);
 
 	const decoder = new KTX2Decoder();
