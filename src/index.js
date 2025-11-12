@@ -711,7 +711,8 @@ async function deobfuscateVRoidHubGLB(id) {
 	let seedMap = null;
 	let modelUrl = null;
 	let resolvedSeed;
-
+        let charname = await getClassContentFromURL(target)
+        charname = charname.toString().replace(/[:\/\\""]/g, '');
 	if (existsSync("./debug") === true) {
 		console.log("Cleaning up debug folder...");
 		const files = await readdir("./debug");
@@ -950,7 +951,7 @@ async function deobfuscateVRoidHubGLB(id) {
 
 	io.setVertexLayout(VertexLayout.SEPARATE);
 	const outputGLB = await io.writeBinary(doc);
-	writeFile(`./${id}.deob.vrm`, outputGLB);
+	writeFile(`./[${id}].${charname}.deobf.vrm`, outputGLB);
 
 	console.log(
 		`Deobfuscation process for VRoid Hub GLB with ID: ${id} completed.`,
@@ -960,6 +961,65 @@ async function deobfuscateVRoidHubGLB(id) {
 
 const parseVRoidHubURL = (url) =>
 	url.replace(/\/+$/, "").split("/").slice(-1)[0];
+
+
+//ai gengen
+import axios from "axios";
+import * as cheerio from "cheerio";
+
+/**
+ * Fetches and extracts the content of elements with a specific class name from a given URL.
+ * @param {string} url - The URL to fetch the HTML content from.
+ * @param {string} className - The class name of the elements to extract content from.
+ * @returns {Promise<string[]>} - A promise that resolves to an array of content strings.
+ */
+export const getClassContentFromURL = async (url, className) => {
+    try {
+	//console.log("ModelLink:", url);
+        // Fetch the HTML content of the URL
+        const {
+            data: html
+        } = await axios.get(url, {
+            responseType: 'document'
+        });
+        const $ = cheerio.load(html);
+        //console.log(html);
+	    //writeFile('./FUCK.html.txt', html)
+        // Extract the content of elements with the specified class name
+        
+        const charname_elem = $('.sc-b2676ded-3'); //warn: vroid hub can change anytime
+        const CharNameContent = charname_elem.text();
+     
+        const charvar_elem = $('.sc-b2676ded-7'); //warn: vroid hub can change anytime
+        const CharVariationContent = charvar_elem.text();
+        //let finalcontent = CharNameContent + "--" + CharVariationContent;
+        const author_elem = $('.sc-b2676ded-5');
+        const AuthorContent =  author_elem.text();
+        let finalcontent = CharNameContent + "_" + CharVariationContent + "--" + AuthorContent;
+        console.log("You are going to download:", finalcontent);
+        const char3rdparty = $('.sc-36e1e351-16');
+        const Char3rdPartyContent = char3rdparty.text();
+        const char3rdpartyallowdownload = $('.sc-36e1e351-17');
+        const Char3rdPartyAllowDownloadContent = char3rdpartyallowdownload.text();
+        if (Char3rdPartyContent == "NG") {
+            console.log("This character is view only. Using optimized model method....");
+        } else {
+            if (Char3rdPartyAllowDownloadContent == '(ダウンロードはNG)') {
+                console.log("This character is not allowed to be downloaded by website.Recommend using game method... ");
+                throw new Error('Character is accessable using other methods');
+            } else {
+                console.log(Char3rdPartyAllowDownloadContent);
+                console.log("This character is allowed to be downloaded by website. Go to website to download it!");
+                throw new Error('Character is accessable using other methods');
+            }
+        }
+        return finalcontent;
+    } catch (error) {
+        console.error('Error fetching or parsing the URL:', error);
+        return [];
+    }
+};
+
 
 const target = process.argv.slice(-1)[0];
 if (!target.startsWith("https://") && Number.isNaN(Number.parseInt(target))) {
