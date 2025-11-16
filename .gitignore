@@ -2,6 +2,7 @@
 *.vrm
 *.ini
 *.txt
+*.vrma
 ### macOS ###
 .vscode
 # General

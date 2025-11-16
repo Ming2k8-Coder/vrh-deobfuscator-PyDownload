@@ -17,6 +17,136 @@ import puppeteer from 'puppeteer';
 
 import { default as initialize } from "./basis_transcoder.cjs";
 
+// --- START: VRMA Motion Download Functions (From Python Script) ---
+
+/**
+ * Downloads a file from a URL and saves it with the specified filename.
+ * @param {string} url - The URL of the file.
+ * @param {string} filename - The local path and filename to save the file.
+ */
+const downloadFile = async (url, filename) => {
+    console.log(`⬇️ Downloading: ${filename} from ${url}`);
+    try {
+        const response = await fetch(url, { timeout: 30000 });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        // Use arrayBuffer for file download
+        const buffer = Buffer.from(await response.arrayBuffer());
+        await writeFile(filename, buffer);
+
+        console.log(`✅ Successfully downloaded and saved as ${filename}`);
+    } catch (e) {
+        console.error(`❌ Error downloading ${filename}: ${e.message}`);
+    }
+};
+
+/**
+ * Fetches character data and downloads associated VRMA motion files.
+ * @param {string} charid - The character ID.
+ */
+async function downloadVRMAMotions(charid) {
+    const base_url = "https://hub.vroid.com/api/character_models/";
+    const urlf = base_url + charid;
+    const headers = {
+        "x-api-version": "11"
+    };
+
+    console.log(`\n--- Starting VRMA Motion Fetch for ID: ${charid} ---`);
+
+    try {
+        // 1. Make the GET request to fetch JSON data
+        const response = await fetch(urlf, { headers: headers, timeout: 30000 });
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        console.log(`✅ Request successful. Status Code: ${response.status}`);
+
+        // 2. Parse the JSON data
+        const data = await response.json();
+
+        // The actual character data is nested under the 'data' key
+        const character_data = data?.data;
+
+        if (!character_data) {
+            console.log("❌ Error: Top-level 'data' key not found in the response.");
+            return;
+        }
+
+        // Save the full JSON response
+        const filename_json = `./debug/${charid}_motion_data.txt`;
+        await writeFile(filename_json, JSON.stringify(data, null, 4));
+        console.log(`💾 Full motion JSON response saved to ${filename_json}`);
+
+        // 3. Extract the motion URLs
+        const motion_urls = [];
+        const personality = character_data.personality;
+
+        if (personality) {
+            
+            // Collect the three direct motion links
+            if (personality.waiting_motion?.url) {
+                motion_urls.push(personality.waiting_motion.url);
+            }
+            
+            if (personality.appearing_motion?.url) {
+                motion_urls.push(personality.appearing_motion.url);
+            }
+                
+            if (personality.liked_motion?.url) {
+                motion_urls.push(personality.liked_motion.url);
+            }
+                
+            // Collect links from the 'other_motions' list
+            if (Array.isArray(personality.other_motions)) {
+                for (const motion of personality.other_motions) {
+                    if (motion.url) {
+                        motion_urls.push(motion.url);
+                    }
+                }
+            }
+            
+            console.log("\n--- Extracted VRMA Motion URLs ---");
+            if (motion_urls.length === 0) {
+                console.log("⚠️ No motion URLs found in the 'personality' section.");
+            } else {
+                for (const url of motion_urls) {
+                    console.log(`- ${url}`);
+                }
+
+                // 4. Download the VRMA files
+                console.log("\n--- Starting VRMA Downloads ---");
+                
+                // Create a dedicated directory for the files
+                const download_dir = `${charid}_motions`;
+                await mkdir(download_dir, { recursive: true });
+                console.log(`📂 Saving files to: ${download_dir}/`);
+
+                for (const url of motion_urls) {
+                    // Extract the filename from the URL 
+                    const urlObj = new URL(url);
+                    const filename = urlObj.pathname.split('/').pop();
+                    const save_path = `${download_dir}/${filename}`;
+                    await downloadFile(url, save_path);
+                }
+                
+                console.log("\n🎉 All motion downloads complete!");
+            }
+        } else {
+            console.log("❌ 'personality' section not found under 'data'.");
+        }
+
+    } catch (e) {
+        console.error(`❌ An error occurred during VRMA fetching: ${e.message}`);
+    }
+}
+
+// --- END: VRMA Motion Download Functions ---
+
+
 const seedMapStartingState = {
 	1599883309: 3549,
 	1761208024: 3174,
@@ -1026,4 +1156,8 @@ if (!target.startsWith("https://") && Number.isNaN(Number.parseInt(target))) {
 	throw new Error("That's not a valid VRoid Hub URL.");
 }
 
-deobfuscateVRoidHubGLB(parseVRoidHubURL(target));
+(async () => {
+    const charid = parseVRoidHubURL(target);
+    await deobfuscateVRoidHubGLB(charid);
+    await downloadVRMAMotions(charid); // <--- New call to download VRMA motions
+})();
