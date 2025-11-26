@@ -82,56 +82,97 @@ async function downloadVRMAMotions(charid) {
         await writeFile(filename_json, JSON.stringify(data, null, 4));
         console.log(`💾 Full motion JSON response saved to ${filename_json}`);
 
-        // 3. Extract the motion URLs
-        const motion_urls = [];
+        // 3. Extract the motion URLs AND their intended new filenames
+        // We'll store objects: { url: '...', saveName: '...' }
+        const motion_info = [];
         const personality = character_data.personality;
+        
+        // Helper function to extract type/name from the URL and construct the new filename
+        const extractAndRename = (url) => {
+            const urlObj = new URL(url);
+            const parts = urlObj.pathname.split('/');
+            
+            // Example Path: /packs/motions/common/womanly/appearing-JPRXVVPX.vrma
+            // Find the index of 'motions' to start extracting folder names
+            const motionsIndex = parts.indexOf('motions');
+            
+            // If 'motions' is not found or is the last part, fall back to original logic
+            if (motionsIndex === -1 || motionsIndex >= parts.length - 2) {
+                // Fallback to simpler logic for single-level paths (e.g., /shy/waiting-...)
+                const type = parts[parts.length - 2]; 
+                const filename = parts[parts.length - 1]; 
+                const motionNameMatch = filename.match(/^([^-]+)-/); 
+                const name = motionNameMatch ? motionNameMatch[1] : filename.split('.')[0];
+                const saveName = `${type}-${name}.vrma`;
+                return { url, saveName };
+            }
+
+            // --- NEW LOGIC FOR MULTI-SEGMENT PATHS ---
+            
+            // Segments are all folder names between 'motions' and the filename
+            // For /packs/motions/common/womanly/appearing-..., the segments are ['common', 'womanly']
+            const segments = parts.slice(motionsIndex + 1, parts.length - 1);
+            
+            // The last part is the original filename (e.g., 'appearing-JPRXVVPX.vrma')
+            const originalFilename = parts[parts.length - 1]; 
+            
+            // Extract the motion name (e.g., 'appearing') by stripping the hash and extension
+            const motionNameMatch = originalFilename.match(/^([^-]+)-/); 
+            const name = motionNameMatch ? motionNameMatch[1] : originalFilename.split('.')[0];
+            
+            // Combine all path segments and the motion name with hyphens
+            // e.g., ['common', 'womanly', 'appearing'] -> 'common-womanly-appearing'
+            const baseName = [...segments, name].join('-');
+
+            const saveName = `${baseName}.vrma`;
+            return { url, saveName };
+        };
 
         if (personality) {
             
             // Collect the three direct motion links
             if (personality.waiting_motion?.url) {
-                motion_urls.push(personality.waiting_motion.url);
+                motion_info.push(extractAndRename(personality.waiting_motion.url));
             }
             
             if (personality.appearing_motion?.url) {
-                motion_urls.push(personality.appearing_motion.url);
+                motion_info.push(extractAndRename(personality.appearing_motion.url));
             }
                 
             if (personality.liked_motion?.url) {
-                motion_urls.push(personality.liked_motion.url);
+                motion_info.push(extractAndRename(personality.liked_motion.url));
             }
                 
             // Collect links from the 'other_motions' list
             if (Array.isArray(personality.other_motions)) {
                 for (const motion of personality.other_motions) {
                     if (motion.url) {
-                        motion_urls.push(motion.url);
+                        motion_info.push(extractAndRename(motion.url));
                     }
                 }
             }
             
-            console.log("\n--- Extracted VRMA Motion URLs ---");
-            if (motion_urls.length === 0) {
+            console.log("\n--- Extracted VRMA Motion URLs and New Names ---");
+            if (motion_info.length === 0) {
                 console.log("⚠️ No motion URLs found in the 'personality' section.");
             } else {
-                for (const url of motion_urls) {
-                    console.log(`- ${url}`);
+                for (const info of motion_info) {
+                    console.log(`- ${info.url} -> ${info.saveName}`);
                 }
 
                 // 4. Download the VRMA files
                 console.log("\n--- Starting VRMA Downloads ---");
                 
                 // Create a dedicated directory for the files
-                const download_dir = `${charid}_motions`;
+                //const download_dir = `${charid}_motions`; 1 folder
+		const download_dir = `VRMAmotions`;
                 await mkdir(download_dir, { recursive: true });
                 console.log(`📂 Saving files to: ${download_dir}/`);
 
-                for (const url of motion_urls) {
-                    // Extract the filename from the URL 
-                    const urlObj = new URL(url);
-                    const filename = urlObj.pathname.split('/').pop();
-                    const save_path = `${download_dir}/${filename}`;
-                    await downloadFile(url, save_path);
+                for (const info of motion_info) {
+                    // Use the calculated saveName instead of extracting from the URL
+                    const save_path = `${download_dir}/${info.saveName}`;
+                    await downloadFile(info.url, save_path);
                 }
                 
                 console.log("\n🎉 All motion downloads complete!");
@@ -231,127 +272,6 @@ const computeSeedMap = async (inputValue, url) => {
 		]),
 	);
 };
-
-/**
- * captureSeedMap(modelUrl, options)
- * - modelUrl: VRoid Hub model page URL
- * - options: { chromePath, timeout }
- *
- * Returns the seedMap object or throws if not found.
- */
-async function captureSeedMap(modelUrl, options = {}) {
-	const timeout = typeof options.timeout === 'number' ? options.timeout : 20000;
-	const chromePath = options.chromePath;
-
-	// derive id (last path segment)
-	let id;
-	try {
-		const u = new URL(modelUrl);
-		const parts = u.pathname.replace(/\/+$/, '').split('/');
-		id = parts[parts.length - 1];
-	} catch (e) {
-		throw new Error('Invalid modelUrl');
-	}
-
-	const launchOptions = { args: ['--no-sandbox'], devtools: true };
-	if (chromePath && existsSync(chromePath)) launchOptions.executablePath = chromePath;
-	else if (process.platform === 'win32') {
-		const common = [
-			'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-			'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
-		];
-		for (const p of common) if (existsSync(p)) { launchOptions.executablePath = p; break; }
-	}
-
-	const browser = await puppeteer.launch(launchOptions);
-	const page = await browser.newPage();
-
-	let captured = null;
-	let viewerScriptUrl = null;
-
-	const cdp = await page.target().createCDPSession();
-	await cdp.send('Debugger.enable');
-	await cdp.send('Runtime.enable');
-
-	let breakpointSet = false;
-
-	function indexToLineCol(text, idx) {
-		const prefix = text.slice(0, idx);
-		const lines = prefix.split('\n');
-		return { lineNumber: Math.max(0, lines.length - 1), columnNumber: lines[lines.length - 1].length || 0 };
-	}
-
-	async function trySetBreakpointOnScript(scriptUrl, scriptSource) {
-		if (breakpointSet) return false;
-        console.log("searching...")
-		const patterns = ['this._seedMap=e.seedMap'];
-		for (const p of patterns) {
-			const i = scriptSource.indexOf(p);
-			if (i === -1) continue;
-			const { lineNumber, columnNumber } = indexToLineCol(scriptSource, i);
-			try {
-				await cdp.send('Debugger.setBreakpointByUrl', { url: scriptUrl, lineNumber, columnNumber });
-				console.log(`Set breakpoint on ${scriptUrl} at line ${lineNumber + 1}, column ${columnNumber + 1}`);
-				breakpointSet = true;
-				return true;
-			} catch (e) {
-				// ignore and try next
-			}
-		}
-		return false;
-	}
-
-	cdp.on('Debugger.scriptParsed', async (msg) => {
-		try {
-			const url = msg.url || '';
-			if (!url) return;
-			if (!url.includes('viewer') && !url.includes('febc') && !url.includes('chunk')) return;
-			const res = await cdp.send('Debugger.getScriptSource', { scriptId: msg.scriptId });
-			const src = res.scriptSource || '';
-			if (!src) return;
-			if (src.includes('seedMap')) {
-				viewerScriptUrl = url;
-				await trySetBreakpointOnScript(url, src);
-			}
-		} catch (e) { }
-	});
-
-	cdp.on('Debugger.paused', async (pauseMsg) => {
-		if (captured) { try { await cdp.send('Debugger.resume'); } catch (e) { } return; }
-
-		const frameId = pauseMsg.callFrames[0].callFrameId;
-
-		const { result: value } = await cdp.send('Debugger.evaluateOnCallFrame', {
-			callFrameId: frameId,
-			expression: 'e',
-			returnByValue: true
-		});
-
-		console.log(value.value.seedMap);
-		captured = value.value.seedMap;
-
-		try { await cdp.send('Debugger.resume'); } catch (e) { }
-	});
-
-	await page.goto(modelUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-	await page.reload({ waitUntil: 'networkidle2', timeout: 60000 });
-
-	const start = Date.now();
-	while (!captured && (Date.now() - start) < timeout) {
-		if (viewerScriptUrl && !breakpointSet) {
-			try {
-				const resp = await page.evaluate(u => fetch(u).then(r => r.text()), viewerScriptUrl);
-				if (resp && resp.includes('seedMap')) await trySetBreakpointOnScript(viewerScriptUrl, resp);
-			} catch (e) { }
-		}
-
-		await new Promise(r => setTimeout(r, 300));
-	}
-
-	await browser.close();
-	if (!captured) throw new Error('Could not capture seedMap');
-	return captured;
-}
 
 class RandomGenerator {
 	constructor(seed = 0x5491333) {
