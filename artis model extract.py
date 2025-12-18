@@ -19,7 +19,7 @@ for a_tag in a_tags:
 
 # Print the unique href values
 num = 0
-ff = open("Needdownload.txt","w")
+ff = open("Needdownload-artistbulk.txt","w")
 for href in hrefs:
     link = "https://hub.vroid.com/" + href
     print(link)
@@ -27,5 +27,5 @@ for href in hrefs:
     num += 1
 print("Total model number:" + str(num))
 ff.close()
-input("Press any key to download all, terminate to not download. Writed to file")
-subprocess.call(['python', 'nodewraper.py'])
+#input("Press any key to download all, terminate to not download. Writed to file")
+#subprocess.call(['python', 'nodewraper.py'])

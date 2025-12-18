@@ -193,6 +193,7 @@ const seedMapStartingState = {
 	612168628: 0,
 	1599883309: 3549,
 	1761208024: 3174,
+	1764841611: 29199,
 	1698286986: 21955,
 	1689231785: 32123,
 	1667373233: 5453,
@@ -984,7 +985,7 @@ async function deobfuscateVRoidHubGLB(id) {
 
 	io.setVertexLayout(VertexLayout.SEPARATE);
 	const outputGLB = await io.writeBinary(doc);
-	writeFile(`./[${id}].${charname}.deobf.vrm`, outputGLB);
+	writeFile(`./[${id}].${makeSafeFilename(charname)}.deobf.vrm`, outputGLB);
 
 	console.log(
 		`Deobfuscation process for VRoid Hub GLB with ID: ${id} completed.`,
